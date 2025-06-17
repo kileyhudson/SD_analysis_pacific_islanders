@@ -47,38 +47,67 @@ hprc <- filter(hprc, !Sample %in% c("hg38", "T2T"))
 pi   <- filter(pi,   !Sample %in% c("hg38", "T2T"))
 
 # parse numbers (strip commas) -----------------------------------------
-parse_bp <- function(x) parse_number(x, locale = locale(grouping_mark = ","))
+parse_bp <- function(x) {
+  # Handle NA and non-numeric values
+  result <- suppressWarnings(parse_number(x, locale = locale(grouping_mark = ",")))
+  # Replace any remaining parsing failures with NA
+  result[is.na(result) & !is.na(x) & x != ""] <- NA
+  return(result)
+}
+
 hprc <- mutate(hprc,
                total_bp = parse_bp(total_bp),
                bp_after_filtering = parse_bp(bp_after_filtering),
-               Group = Superpopulation,
+               Group = "HPRC",  # All HPRC samples get the same group
                Category = "HPRC")
 
 pi <- mutate(pi,
              total_bp = parse_bp(total_bp),
              bp_after_filtering = parse_bp(bp_after_filtering),
-             Group = "PI",
+             Group = Superpopulation,  # PI samples grouped by island
              Category = "PI")
+
+# Remove rows with NA values in bp columns
+hprc <- filter(hprc, !is.na(total_bp) & !is.na(bp_after_filtering))
+pi <- filter(pi, !is.na(total_bp) & !is.na(bp_after_filtering))
 
 df <- bind_rows(hprc, pi)
 
 # colour palettes -------------------------------------------------------
-hprc_groups <- sort(unique(hprc$Group))
-hprc_cols <- setNames(c("red", "orange", "green",
-                        "#66FFB3", "purple")[seq_along(hprc_groups)],
-                      hprc_groups)
-all_cols <- c(hprc_cols, PI = "#555555")
+# Get unique islands from PI data
+pi_islands <- sort(unique(pi$Group))
+
+# Define colors for each island
+island_cols <- c(
+  "Samoa"       = "#E41A1C",  # bright red
+  "Fiji"        = "#377EB8",  # clear blue
+  "Philippines" = "#4DAF4A",  # green
+  "Guam"        = "#FF7F00",  # orange
+  "Tonga"       = "#984EA3",  # purple
+  "Marshall"    = "#FFD92F",  # yellow
+  "Pohnpei"     = "#A65628",  # brown
+  "Tahiti"      = "#999999"   # grey
+)
+
+# Only keep colors for islands that exist in the data
+island_cols <- island_cols[names(island_cols) %in% pi_islands]
+
+# Combine HPRC (gray) with island colors
+all_cols <- c("HPRC" = "black", island_cols)  # Changed to a more visible gray
+
+# Define what should appear in the legend
+legend_order <- c("HPRC", names(island_cols))
 
 # plot -----------------------------------------------------------------
-wanted <- c("AFR", "AMR", "EAS", "EUR", "SAS", "PI")
 p <- ggplot(df,
             aes(x = total_bp, y = bp_after_filtering,
                 colour = Group)) +
   geom_abline(slope = 1, intercept = 0,
               linetype = "dashed", colour = "grey70") +
-  geom_point(alpha = 0.6, size = 2) +
-  scale_colour_manual(values = all_cols, breaks= wanted,
-                     name = "Populations") +
+  geom_point(alpha = 0.7, size = 2.5) +  # Slightly larger and more opaque
+  scale_colour_manual(values = all_cols, 
+                      breaks = legend_order,  # Show HPRC and islands in legend
+                      name = "Population") +
   scale_x_continuous(labels = label_number(scale = 1 / 1e9,
                                            accuracy = 0.01,
                                            suffix = " Gb")) +
@@ -86,10 +115,11 @@ p <- ggplot(df,
                                            accuracy = 0.01,
                                            suffix = " Gb")) +
   labs(title = "Total base pairs vs. base pairs after filtering",
-       subtitle= "HPRC and Pacific Ancestry Assemblies",
-	x = "Total bp (Gb)",
+       subtitle = "HPRC and Pacific Ancestry Assemblies",
+       x = "Total bp (Gb)",
        y = "After filtering bp (Gb)") +
-  theme_classic(base_size = 14)
+  theme_classic(base_size = 14) +
+  theme(legend.position = "right")
 
 # save -----------------------------------------------------------------
-ggsave("scatter_total_vs_filtered_bp.png", p, width = 8, height = 5, dpi = 300)
+ggsave("scatter_total_vs_filtered_bp1.png", p, width = 9, height = 6, dpi = 300)
