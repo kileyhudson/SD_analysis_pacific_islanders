@@ -11,7 +11,7 @@ from collections import defaultdict
 import re
 
 def parse_summary_statistics(file_path):
-    """Parse the summary statistics file"""
+    #Parse the summary statistics file
     stats = {}
     
     with open(file_path, 'r') as f:
@@ -55,7 +55,7 @@ def parse_summary_statistics(file_path):
     return stats
 
 def parse_small_scale_errors(file_path):
-    """Parse small-scale error BED file"""
+    #Parse small-scale error BED file
     errors = []
     
     if not os.path.exists(file_path):
@@ -76,7 +76,7 @@ def parse_small_scale_errors(file_path):
     return df
 
 def parse_structural_errors(file_path):
-    """Parse structural error BED file"""
+    #Parse structural error BED file
     if not os.path.exists(file_path):
         print(f"Warning: {file_path} not found")
         return pd.DataFrame()
@@ -115,7 +115,7 @@ def parse_structural_errors(file_path):
     return df
 
 def calculate_error_statistics(small_errors, struct_errors, summary_stats):
-    """Calculate comprehensive error statistics"""
+    #Calculate comprehensive error statistics
     stats = {}
     
     # Total assembly length
@@ -229,10 +229,8 @@ def create_summary_table(all_stats):
 
 def main():
     parser = argparse.ArgumentParser(description='Analyze Inspector error statistics')
-    parser.add_argument('--input-dir', default='/projects/standard/hsiehph/shared/globus-incoming/assembly_qc_files',
-                        help='Input directory containing sample folders')
-    parser.add_argument('--output-dir', default='/projects/standard/hsiehph/shared/DIR_homes/hudso501/analysisPI/data',
-                        help='Output directory for results')
+    parser.add_argument('--input-dir', default='/projects/standard/hsiehph/shared/globus-incoming/assembly_qc_files')
+    parser.add_argument('--output-dir', default='/projects/standard/hsiehph/shared/DIR_homes/hudso501/analysisPI/data/inspector')
     args = parser.parse_args()
     
     # Create output directory if it doesn't exist
