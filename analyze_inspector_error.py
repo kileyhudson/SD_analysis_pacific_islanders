@@ -170,15 +170,110 @@ def calculate_nonredundant_coverage(errors_df):
     
     return total_nonredundant_bp, dict(bp_by_type)
 
+def calculate_combined_nonredundant_coverage(small_errors, struct_errors):
+    # Combine all errors into one dataset first, then calculate non-redundant coverage
+    # This properly handles overlaps between small-scale and structural errors
+    
+    if small_errors.empty and struct_errors.empty:
+        return 0, {}
+    
+    # Step 1: Create a combined dataset with all errors
+    combined_errors = []
+    
+    # Add small-scale errors
+    if not small_errors.empty:
+        for _, error in small_errors.iterrows():
+            combined_errors.append({
+                'contig': error['contig'],
+                'start': error['start'], 
+                'end': error['end'],
+                'type': error['type'],
+                'category': 'small_scale'
+            })
+    
+    # Add structural errors  
+    if not struct_errors.empty:
+        for _, error in struct_errors.iterrows():
+            combined_errors.append({
+                'contig': error['contig'],
+                'start': error['start'],
+                'end': error['end'], 
+                'type': error['type'],
+                'category': 'structural'
+            })
+    
+    if not combined_errors:
+        return 0, {}
+    
+    # Convert to DataFrame for easier processing
+    import pandas as pd
+    combined_df = pd.DataFrame(combined_errors)
+    
+    # Step 2: Calculate non-redundant coverage across ALL errors
+    total_nonredundant_bp = 0
+    bp_by_type = defaultdict(int)
+    
+    # Group by contig to handle each chromosome separately
+    for contig in combined_df['contig'].unique():
+        contig_errors = combined_df[combined_df['contig'] == contig].copy()
+        
+        # Sort by start position
+        contig_errors = contig_errors.sort_values('start')
+        
+        # Step 3: Merge overlapping intervals across ALL error types
+        merged_intervals = []
+        type_intervals = defaultdict(list)  # Track intervals by type
+        
+        for _, error in contig_errors.iterrows():
+            start, end = error['start'], error['end']
+            error_type = error['type']
+            
+            # Add to type-specific tracking
+            type_intervals[error_type].append((start, end))
+            
+            # Merge overlapping intervals for total coverage
+            if not merged_intervals or start > merged_intervals[-1][1]:
+                # No overlap with previous interval
+                merged_intervals.append((start, end))
+            else:
+                # Overlap detected - merge with previous interval
+                merged_intervals[-1] = (merged_intervals[-1][0], max(merged_intervals[-1][1], end))
+        
+        # Step 4: Calculate total non-redundant bp for this contig
+        contig_bp = sum(end - start for start, end in merged_intervals)
+        total_nonredundant_bp += contig_bp
+        
+        # Step 5: Calculate non-redundant bp by error type for this contig
+        # Note: This still calculates per-type coverage separately because
+        # we want to know how much each error type contributes
+        for error_type, intervals in type_intervals.items():
+            # Merge overlapping intervals for this specific error type
+            intervals.sort()
+            merged_type_intervals = []
+            
+            for start, end in intervals:
+                if not merged_type_intervals or start > merged_type_intervals[-1][1]:
+                    merged_type_intervals.append((start, end))
+                else:
+                    merged_type_intervals[-1] = (merged_type_intervals[-1][0], 
+                                               max(merged_type_intervals[-1][1], end))
+            
+            type_bp = sum(end - start for start, end in merged_type_intervals)
+            bp_by_type[error_type] += type_bp
+    
+    return total_nonredundant_bp, dict(bp_by_type)
+
+
 def calculate_error_statistics(small_errors, struct_errors, summary_stats):
-    # Calculate comprehensive error statistics with non-redundant coverage
+    # Calculate error statistics
     stats = {}
     
     # Total assembly length
     total_length = summary_stats.get('total_length', 0)
     total_length_mbp = total_length / 1_000_000
     
-    # Small-scale error statistics
+    # Calculate SEPARATE non-redundant coverage for each error category
+    # (for individual category stats)
     if not small_errors.empty:
         small_error_types = small_errors['type'].value_counts().to_dict()
         small_nonredundant_bp, small_bp_by_type = calculate_nonredundant_coverage(small_errors)
@@ -186,9 +281,9 @@ def calculate_error_statistics(small_errors, struct_errors, summary_stats):
         stats['small_scale_errors'] = {
             'total': len(small_errors),
             'types': small_error_types,
-            'total_bp': small_errors['size'].sum(),  # Raw sum (may have overlaps)
-            'nonredundant_bp': small_nonredundant_bp,  # Non-redundant coverage
-            'bp_by_type': small_bp_by_type,  # BP coverage by error type
+            'total_bp': small_errors['size'].sum(),
+            'nonredundant_bp': small_nonredundant_bp,
+            'bp_by_type': small_bp_by_type,
             'mean_size': small_errors['size'].mean(),
             'median_size': small_errors['size'].median(),
             'errors_per_mbp': len(small_errors) / total_length_mbp if total_length_mbp > 0 else 0,
@@ -200,7 +295,6 @@ def calculate_error_statistics(small_errors, struct_errors, summary_stats):
             'nonredundant_bp': 0, 'bp_by_type': {}
         }
     
-    # Structural error statistics
     if not struct_errors.empty:
         struct_error_types = struct_errors['type'].value_counts().to_dict()
         struct_nonredundant_bp, struct_bp_by_type = calculate_nonredundant_coverage(struct_errors)
@@ -222,16 +316,18 @@ def calculate_error_statistics(small_errors, struct_errors, summary_stats):
             'nonredundant_bp': 0, 'bp_by_type': {}
         }
     
-    # Combined statistics
-    all_nonredundant_bp = stats['small_scale_errors']['nonredundant_bp'] + stats['structural_errors']['nonredundant_bp']
+    # Calculate combined non-redundant coverage
+    combined_nonredundant_bp, combined_bp_by_type = calculate_combined_nonredundant_coverage(small_errors, struct_errors)
     
+    # Combined statistics
     stats['combined'] = {
         'total_errors': stats['small_scale_errors']['total'] + stats['structural_errors']['total'],
         'total_error_bp': stats['small_scale_errors']['total_bp'] + stats['structural_errors']['total_bp'],
-        'total_nonredundant_bp': all_nonredundant_bp,
-        'error_fraction': all_nonredundant_bp / total_length if total_length > 0 else 0,
+        'total_nonredundant_bp': combined_nonredundant_bp,  
+        'error_fraction': combined_nonredundant_bp / total_length if total_length > 0 else 0,
         'assembly_length': total_length,
-        'assembly_length_mbp': total_length_mbp
+        'assembly_length_mbp': total_length_mbp,
+        'combined_bp_by_type': combined_bp_by_type
     }
     
     # Add summary statistics
